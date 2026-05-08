@@ -17,24 +17,29 @@ import java.math.BigDecimal;
 public class OrderItem {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(columnDefinition = "CHAR(36)")
+    private String id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
 
-    @Column(nullable = false)
-    private Long menuItemId;
+    @Column(name = "menu_item_id", nullable = false, columnDefinition = "CHAR(36)")
+    private String menuItemId;
 
-    @Column(nullable = false)
-    private String itemName;
+    @Column(name = "menu_item_name", nullable = false, length = 255)
+    private String menuItemName;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "SMALLINT")
     private Integer quantity;
 
-    @Column(nullable = false)
+    @Column(name = "unit_price", nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
 
+    @Column(name = "special_instructions", columnDefinition = "TEXT")
     private String specialInstructions;
+
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal subtotal;
 }

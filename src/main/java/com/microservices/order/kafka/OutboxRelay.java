@@ -20,19 +20,25 @@ public class OutboxRelay {
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
 
-    @Scheduled(fixedDelay = 500) // Run every 500ms
+    @Scheduled(fixedDelay = 500)
     public void relayUnpublishedEvents() {
-        List<OutboxEvent> unpublishedEvents = outboxEventRepository.findUnpublishedEvents();
+        List<OutboxEvent> unpublished = outboxEventRepository.findUnpublishedEvents();
 
-        for (OutboxEvent event : unpublishedEvents) {
-            try {
-                kafkaTemplate.send(event.getTopicName(), event.getPayload());
-                event.setPublished(true);
-                outboxEventRepository.save(event);
-                log.info("Published outbox event: {} to topic: {}", event.getEventType(), event.getTopicName());
-            } catch (Exception e) {
-                log.error("Failed to publish outbox event: {}", event.getId(), e);
-            }
+        for (OutboxEvent event : unpublished) {
+            kafkaTemplate.send(event.getTopic(), event.getPartitionKey(), event.getPayload())
+                    .whenComplete((result, ex) -> {
+                        if (ex == null) {
+                            event.setPublished(true);
+                            outboxEventRepository.save(event);
+                            log.info("Published [{}] → topic={} partition={} offset={}",
+                                    event.getId(),
+                                    result.getRecordMetadata().topic(),
+                                    result.getRecordMetadata().partition(),
+                                    result.getRecordMetadata().offset());
+                        } else {
+                            log.error("Failed to publish event id={}: {}", event.getId(), ex.getMessage());
+                        }
+                    });
         }
     }
 }
