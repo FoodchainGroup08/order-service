@@ -209,14 +209,33 @@ public class OrderServiceImpl implements OrderService {
 
     private void publishOutboxEvent(Order order, String topic) {
         try {
-            Map<String, Object> payload = Map.of(
-                    "orderId", order.getId(),
-                    "customerId", order.getCustomerId(),
-                    "branchId", order.getBranchId(),
-                    "status", order.getStatus().toString(),
-                    "totalAmount", order.getTotalAmount(),
-                    "orderType", order.getOrderType().toString()
-            );
+            Map<String, Object> payload = new java.util.HashMap<>();
+            payload.put("orderId",     order.getId());
+            payload.put("customerId",  order.getCustomerId());
+            payload.put("branchId",    order.getBranchId());
+            payload.put("status",      order.getStatus().toString());
+            payload.put("totalAmount", order.getTotalAmount());
+            payload.put("orderType",   order.getOrderType().toString());
+
+            // Include full order detail in order.received so kitchen-service has everything it needs
+            if ("order.received".equals(topic)) {
+                payload.put("tableNumber", order.getTableNumber());
+                payload.put("notes",       order.getNotes());
+                if (order.getItems() != null) {
+                    var itemList = order.getItems().stream()
+                            .map(item -> {
+                                Map<String, Object> i = new java.util.HashMap<>();
+                                i.put("menuItemId",          item.getMenuItemId());
+                                i.put("menuItemName",        item.getMenuItemName());
+                                i.put("quantity",            item.getQuantity());
+                                i.put("unitPrice",           item.getUnitPrice());
+                                i.put("specialInstructions", item.getSpecialInstructions());
+                                return i;
+                            })
+                            .collect(Collectors.toList());
+                    payload.put("items", itemList);
+                }
+            }
 
             OutboxEvent event = OutboxEvent.builder()
                     .topic(topic)

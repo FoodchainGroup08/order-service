@@ -52,3 +52,10 @@ logging:
   level:
     root: INFO
     com.microservices: DEBUG
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+  show-actuator: false

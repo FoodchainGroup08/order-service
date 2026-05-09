@@ -16,9 +16,9 @@ public class StatusTransitionValidator {
     public StatusTransitionValidator() {
         allowedTransitions = new HashMap<>();
 
-        // RECEIVED can go to CONFIRMED or CANCELLED
+        // RECEIVED can go to CONFIRMED, PREPARING (kitchen accepts directly), or CANCELLED
         allowedTransitions.put(Order.OrderStatus.RECEIVED,
-                Set.of(Order.OrderStatus.CONFIRMED, Order.OrderStatus.CANCELLED));
+                Set.of(Order.OrderStatus.CONFIRMED, Order.OrderStatus.PREPARING, Order.OrderStatus.CANCELLED));
 
         // CONFIRMED can go to PREPARING or CANCELLED
         allowedTransitions.put(Order.OrderStatus.CONFIRMED,
