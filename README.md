@@ -2,11 +2,23 @@
 
 Spring Boot microservice for order placement, lifecycle management, and status tracking in the FoodChain platform.
 
-## Port
+## Port and base URL
 
-`8183` (context path `/api`)
+| Source | Port |
+|--------|------|
+| **`src/main/resources/application.yml`** | **8183** |
+| **Spring Cloud Config** (`foodchain-config/order-service.yml`) / Docker stack | Often **8083** |
 
-Base URL: `http://localhost:8183/api`
+Context path: **`/api`**.
+
+Examples:
+
+- Direct (Maven with default yml): `http://localhost:8183/api`
+- Config Server / Compose healthchecks often use: `http://localhost:8083/api`
+
+**Via API Gateway:** `http://localhost:8080/api/v1/orders` (preferred for clients).
+
+REST controllers live under **`/v1/orders`** on this service.
 
 ---
 
@@ -34,9 +46,9 @@ RECEIVED
    |--- CANCELLED  (terminal -- only from RECEIVED or CONFIRMED)
 ```
 
-**Active statuses** (returned by `GET /orders/active`): `RECEIVED`, `CONFIRMED`, `PREPARING`, `READY`
+**Active statuses** (returned by `GET /v1/orders/active`): `RECEIVED`, `CONFIRMED`, `PREPARING`, `READY`
 
-**History statuses** (returned by `GET /orders/history`): `PICKED_UP`, `SERVED`, `COMPLETED`, `CANCELLED`
+**History statuses** (returned by `GET /v1/orders/history`): `PICKED_UP`, `SERVED`, `COMPLETED`, `CANCELLED`
 
 ---
 
@@ -60,7 +72,9 @@ The API gateway validates the JWT token and injects the authenticated user's ID 
 
 ## Endpoints
 
-### POST /orders — Place a New Order
+Paths below are **`/v1/orders/...`** relative to **`/api`** (full path on host: `/api/v1/orders/...`).
+
+### POST /v1/orders — Place a New Order
 
 **Required headers:**
 - `X-User-Id: <customer-uuid>` — injected by API gateway; returns `401` if missing.
@@ -125,7 +139,7 @@ The API gateway validates the JWT token and injects the authenticated user's ID 
 
 ---
 
-### GET /orders/{orderId} — Get Order Details
+### GET /v1/orders/{orderId} — Get Order Details
 
 Returns the same `FrontendOrderResponse` shape as the create endpoint.
 
@@ -135,7 +149,7 @@ Returns the same `FrontendOrderResponse` shape as the create endpoint.
 
 ---
 
-### GET /orders/active — List Active Orders
+### GET /v1/orders/active — List Active Orders
 
 Returns a paginated list of orders currently in progress.
 
@@ -168,15 +182,15 @@ Returns a paginated list of orders currently in progress.
 
 ---
 
-### GET /orders/history — Order History
+### GET /v1/orders/history — Order History
 
 Returns a paginated list of completed or cancelled orders (PICKED_UP, SERVED, COMPLETED, CANCELLED), sorted by most recent first.
 
-**Query params:** same as `/orders/active`.
+**Query params:** same as `/v1/orders/active`.
 
 ---
 
-### PUT /orders/{orderId}/status — Update Order Status
+### PUT /v1/orders/{orderId}/status — Update Order Status
 
 **Request body:**
 ```json
@@ -209,7 +223,7 @@ Status value is case-insensitive (`confirmed` and `CONFIRMED` both work).
 
 ---
 
-### POST /orders/{orderId}/cancel — Cancel an Order
+### POST /v1/orders/{orderId}/cancel — Cancel an Order
 
 Only cancellable from `RECEIVED` or `CONFIRMED` status.
 
