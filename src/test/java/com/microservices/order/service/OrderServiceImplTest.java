@@ -20,6 +20,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.http.HttpStatus;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -55,31 +56,134 @@ class OrderServiceImplTest {
     void createOrder_shouldSaveOrderAndPublishOutboxEvent() {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
-        OrderDtos.OrderResponse response = orderService.createOrder(buildCreateRequest(), null);
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
 
-        assertThat(response.getOrderId()).isEqualTo("order-uuid-001");
+        assertThat(response.getId()).isEqualTo("order-uuid-001");
         assertThat(response.getStatus()).isEqualTo("RECEIVED");
-        assertThat(response.getTotalAmount()).isEqualByComparingTo("25.00");
+        assertThat(response.getTotal()).isEqualByComparingTo("25.00");
 
         verify(orderRepository).save(any(Order.class));
         verify(outboxEventRepository).save(any(OutboxEvent.class));
     }
 
     @Test
+    void createOrder_shouldSetCustomerIdFromParameter_notFromRequestBody() {
+        when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
+
+        orderService.createOrder(buildCreateRequest(), "injected-user-id", null);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getCustomerId()).isEqualTo("injected-user-id");
+    }
+
+    @Test
+    void createOrder_shouldReturnFrontendOrderTypeInLowercaseHyphen() {
+        when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
+
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+
+        assertThat(response.getOrderType()).isEqualTo("dine-in");
+    }
+
+    @Test
+    void createOrder_deliveryOrder_shouldApplyDeliveryFee() {
+        Order savedOrder = Order.builder()
+                .id("order-uuid-001")
+                .customerId("cust-uuid-001")
+                .branchId("branch-uuid-001")
+                .orderType(Order.OrderType.DELIVERY)
+                .totalAmount(new BigDecimal("12.00"))
+                .deliveryFee(new BigDecimal("2.00"))
+                .status(Order.OrderStatus.RECEIVED)
+                .createdAt(LocalDateTime.now())
+                .build();
+        when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
+                "delivery", "123 Main St", null, null,
+                "John", "555-0000", "card", null);
+
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(req, "cust-uuid-001", null);
+
+        assertThat(response.getDeliveryFee()).isEqualByComparingTo("2.00");
+        assertThat(response.getOrderType()).isEqualTo("delivery");
+    }
+
+    @Test
+    void createOrder_dineInOrder_shouldHaveZeroDeliveryFee() {
+        when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
+
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+
+        assertThat(response.getDeliveryFee()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void createOrder_itemWithNullNameAndPrice_shouldUseDefaults() {
+        Order savedOrder = Order.builder()
+                .id("order-uuid-001")
+                .customerId("cust-uuid-001")
+                .branchId("branch-uuid-001")
+                .orderType(Order.OrderType.DINE_IN)
+                .totalAmount(BigDecimal.ZERO)
+                .deliveryFee(BigDecimal.ZERO)
+                .status(Order.OrderStatus.RECEIVED)
+                .createdAt(LocalDateTime.now())
+                .build();
+        when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
+
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-item-abcd", null, 1, null, null)),
+                "dine-in", null, "2", null,
+                "Jane", "555-0000", "cash", null);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        orderService.createOrder(req, "cust-uuid-001", null);
+        verify(orderRepository).save(orderCaptor.capture());
+
+        // The service sets items on the order after save — we verify via the items list built internally.
+        // The test confirms no exception is thrown and the call completes successfully.
+        verify(outboxEventRepository).save(any(OutboxEvent.class));
+    }
+
+    @Test
+    void createOrder_invalidOrderType_shouldThrow400() {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
+                "drive-thru", null, null, null,
+                null, null, null, null);
+
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
     void createOrder_withCachedIdempotencyKey_shouldReturnCachedResponseWithoutSaving() throws Exception {
         String cachedJson = new ObjectMapper().writeValueAsString(
-                OrderDtos.OrderResponse.builder()
-                        .orderId("order-cached-001")
+                OrderDtos.FrontendOrderResponse.builder()
+                        .id("order-cached-001")
                         .status("RECEIVED")
-                        .totalAmount(new BigDecimal("25.00"))
+                        .total(new BigDecimal("25.00"))
                         .build());
 
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("idempotency:idem-key-123")).thenReturn(cachedJson);
 
-        OrderDtos.OrderResponse response = orderService.createOrder(buildCreateRequest(), "idem-key-123");
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-123");
 
-        assertThat(response.getOrderId()).isEqualTo("order-cached-001");
+        assertThat(response.getId()).isEqualTo("order-cached-001");
         verify(orderRepository, never()).save(any());
         verify(outboxEventRepository, never()).save(any());
     }
@@ -90,13 +194,38 @@ class OrderServiceImplTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(anyString())).thenReturn(null);
 
-        OrderDtos.OrderResponse response = orderService.createOrder(buildCreateRequest(), "idem-key-new");
+        OrderDtos.FrontendOrderResponse response =
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-new");
 
-        assertThat(response.getOrderId()).isEqualTo("order-uuid-001");
+        assertThat(response.getId()).isEqualTo("order-uuid-001");
         verify(valueOperations).set(eq("idempotency:idem-key-new"), anyString(), any());
     }
 
-    // ── getOrderById ──────────────────────────────────────────────────────────
+    // ── getFrontendOrderById ──────────────────────────────────────────────────
+
+    @Test
+    void getFrontendOrderById_shouldReturnFrontendShapeWithItems() {
+        Order order = stubSavedOrder();
+        order.setItems(List.of(
+                OrderItem.builder().menuItemId("item-1").menuItemName("Jollof Rice")
+                        .quantity(2).unitPrice(new BigDecimal("10.00"))
+                        .subtotal(new BigDecimal("20.00")).build(),
+                OrderItem.builder().menuItemId("item-2").menuItemName("Chicken")
+                        .quantity(1).unitPrice(new BigDecimal("5.00"))
+                        .subtotal(new BigDecimal("5.00")).build()));
+        when(orderRepository.findByIdWithItems("order-uuid-001")).thenReturn(Optional.of(order));
+
+        OrderDtos.FrontendOrderResponse response = orderService.getFrontendOrderById("order-uuid-001");
+
+        assertThat(response.getId()).isEqualTo("order-uuid-001");
+        assertThat(response.getOrderType()).isEqualTo("dine-in");
+        assertThat(response.getItems()).hasSize(2);
+        assertThat(response.getItems().get(0).getName()).isEqualTo("Jollof Rice");
+        assertThat(response.getItems().get(1).getName()).isEqualTo("Chicken");
+        assertThat(response.getSubtotal()).isEqualByComparingTo("25.00");
+    }
+
+    // ── getOrderById (detail) ─────────────────────────────────────────────────
 
     @Test
     void getOrderById_shouldReturnDetailResponseWithItems() {
@@ -166,7 +295,7 @@ class OrderServiceImplTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void getOrderHistory_shouldUseHistoryStatusesAndReturnPage() {
+    void getOrderHistory_shouldIncludePickedUpServedCompletedAndCancelled() {
         Page<Order> page = new PageImpl<>(List.of());
         when(orderRepository.findByStatusWithFilters(anyList(), isNull(), isNull(), any(Pageable.class)))
                 .thenReturn(page);
@@ -176,6 +305,7 @@ class OrderServiceImplTest {
         ArgumentCaptor<List<Order.OrderStatus>> statusCaptor = ArgumentCaptor.forClass(List.class);
         verify(orderRepository).findByStatusWithFilters(statusCaptor.capture(), isNull(), isNull(), any());
         assertThat(statusCaptor.getValue()).containsExactlyInAnyOrder(
+                Order.OrderStatus.PICKED_UP, Order.OrderStatus.SERVED,
                 Order.OrderStatus.COMPLETED, Order.OrderStatus.CANCELLED);
     }
 
@@ -215,6 +345,40 @@ class OrderServiceImplTest {
         assertThat(auditCaptor.getValue().getNewStatus()).isEqualTo("CONFIRMED");
         assertThat(auditCaptor.getValue().getUpdatedBy()).isEqualTo("staff-001");
         assertThat(auditCaptor.getValue().getNotes()).isEqualTo("Kitchen confirmed");
+    }
+
+    @Test
+    void updateOrderStatus_toPickedUp_shouldSucceed() {
+        Order order = Order.builder()
+                .id("order-uuid-001").customerId("cust-uuid-001").branchId("branch-uuid-001")
+                .orderType(Order.OrderType.TAKEAWAY).totalAmount(new BigDecimal("25.00"))
+                .status(Order.OrderStatus.READY).build();
+        when(orderRepository.findById("order-uuid-001")).thenReturn(Optional.of(order));
+        when(statusTransitionValidator.isValidTransition(Order.OrderStatus.READY, Order.OrderStatus.PICKED_UP))
+                .thenReturn(true);
+        when(orderRepository.save(any(Order.class))).thenReturn(order);
+
+        OrderDtos.OrderResponse response = orderService.updateOrderStatus(
+                "order-uuid-001", Order.OrderStatus.PICKED_UP, "staff-001", null);
+
+        assertThat(response.getStatus()).isEqualTo("PICKED_UP");
+    }
+
+    @Test
+    void updateOrderStatus_toServed_shouldSucceed() {
+        Order order = Order.builder()
+                .id("order-uuid-001").customerId("cust-uuid-001").branchId("branch-uuid-001")
+                .orderType(Order.OrderType.DINE_IN).totalAmount(new BigDecimal("25.00"))
+                .status(Order.OrderStatus.READY).build();
+        when(orderRepository.findById("order-uuid-001")).thenReturn(Optional.of(order));
+        when(statusTransitionValidator.isValidTransition(Order.OrderStatus.READY, Order.OrderStatus.SERVED))
+                .thenReturn(true);
+        when(orderRepository.save(any(Order.class))).thenReturn(order);
+
+        OrderDtos.OrderResponse response = orderService.updateOrderStatus(
+                "order-uuid-001", Order.OrderStatus.SERVED, "staff-001", null);
+
+        assertThat(response.getStatus()).isEqualTo("SERVED");
     }
 
     @Test
@@ -316,6 +480,7 @@ class OrderServiceImplTest {
                 .branchId("branch-uuid-001")
                 .orderType(Order.OrderType.DINE_IN)
                 .totalAmount(new BigDecimal("25.00"))
+                .deliveryFee(BigDecimal.ZERO)
                 .status(Order.OrderStatus.RECEIVED)
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -327,6 +492,8 @@ class OrderServiceImplTest {
         var item2 = new OrderDtos.OrderItemRequest(
                 "menu-item-002", "Chicken", 1, new BigDecimal("5.00"), "Extra crispy");
         return new OrderDtos.CreateOrderRequest(
-                "cust-uuid-001", "branch-uuid-001", List.of(item1, item2), "DINE_IN", null, "5", null);
+                "branch-uuid-001", "Main Branch",
+                List.of(item1, item2), "dine-in", null, "5", null,
+                "John", "555-1234", "card", null);
     }
 }

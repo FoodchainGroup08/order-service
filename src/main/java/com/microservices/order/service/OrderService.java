@@ -6,7 +6,15 @@ import org.springframework.data.domain.Page;
 
 public interface OrderService {
 
-    OrderDtos.OrderResponse createOrder(OrderDtos.CreateOrderRequest request, String idempotencyKey);
+    /**
+     * Creates a new order. customerId is extracted from the JWT gateway header (X-User-Id)
+     * and passed in explicitly — it is not present in the request body.
+     */
+    OrderDtos.FrontendOrderResponse createOrder(OrderDtos.CreateOrderRequest request,
+                                                String customerId,
+                                                String idempotencyKey);
+
+    OrderDtos.FrontendOrderResponse getFrontendOrderById(String orderId);
 
     OrderDtos.OrderDetailResponse getOrderById(String orderId);
 

@@ -28,11 +28,15 @@ public class StatusTransitionValidator {
         allowedTransitions.put(Order.OrderStatus.PREPARING,
                 Set.of(Order.OrderStatus.READY));
 
-        // READY can go to COMPLETED
+        // READY can go to PICKED_UP (takeaway/delivery), SERVED (dine-in), or legacy COMPLETED
         allowedTransitions.put(Order.OrderStatus.READY,
-                Set.of(Order.OrderStatus.COMPLETED));
+                Set.of(Order.OrderStatus.PICKED_UP, Order.OrderStatus.SERVED, Order.OrderStatus.COMPLETED));
 
-        // COMPLETED and CANCELLED are terminal states
+        // PICKED_UP and SERVED are terminal states (new flow)
+        allowedTransitions.put(Order.OrderStatus.PICKED_UP, new HashSet<>());
+        allowedTransitions.put(Order.OrderStatus.SERVED, new HashSet<>());
+
+        // COMPLETED and CANCELLED are terminal states (legacy / backward compat)
         allowedTransitions.put(Order.OrderStatus.COMPLETED, new HashSet<>());
         allowedTransitions.put(Order.OrderStatus.CANCELLED, new HashSet<>());
     }

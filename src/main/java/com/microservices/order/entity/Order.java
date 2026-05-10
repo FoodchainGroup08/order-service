@@ -38,7 +38,7 @@ public class Order {
     private OrderType orderType;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 15)
+    @Column(nullable = false, length = 20)
     private OrderStatus status;
 
     @Column(name = "table_number", length = 10)
@@ -69,12 +69,37 @@ public class Order {
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<OrderItem> items;
 
+    @Column(name = "customer_name", length = 255)
+    private String customerName;
+
+    @Column(name = "phone_number", length = 50)
+    private String phoneNumber;
+
+    @Column(name = "payment_method", length = 50)
+    private String paymentMethod;
+
+    @Column(name = "special_instructions", columnDefinition = "TEXT")
+    private String specialInstructions;
+
+    @Column(name = "delivery_fee", precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal deliveryFee = BigDecimal.ZERO;
+
+    @Column(name = "branch_name", length = 255)
+    private String branchName;
+
+    @Column(name = "estimated_time", length = 100)
+    private String estimatedTime;
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
         if (this.status == null) {
             this.status = OrderStatus.RECEIVED;
+        }
+        if (this.deliveryFee == null) {
+            this.deliveryFee = BigDecimal.ZERO;
         }
     }
 
@@ -84,7 +109,7 @@ public class Order {
     }
 
     public enum OrderStatus {
-        RECEIVED, CONFIRMED, PREPARING, READY, COMPLETED, CANCELLED
+        RECEIVED, CONFIRMED, PREPARING, READY, PICKED_UP, SERVED, COMPLETED, CANCELLED
     }
 
     public enum OrderType {
