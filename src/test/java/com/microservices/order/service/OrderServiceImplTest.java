@@ -9,6 +9,8 @@ import com.microservices.order.entity.OutboxEvent;
 import com.microservices.order.exception.ResourceNotFoundException;
 import com.microservices.order.repository.OrderRepository;
 import com.microservices.order.repository.OrderStatusUpdateRepository;
+import com.microservices.order.notification.OrderEmailPublisher;
+import com.microservices.order.payment.PaystackClient;
 import com.microservices.order.repository.OutboxEventRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +50,10 @@ class OrderServiceImplTest {
     @SuppressWarnings("unchecked")
     @Mock private ValueOperations<String, String> valueOperations;
 
+    @Mock private PaystackClient paystackClient;
+
+    @Mock private OrderEmailPublisher orderEmailPublisher;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 
@@ -58,7 +64,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getId()).isEqualTo("order-uuid-001");
         assertThat(response.getStatus()).isEqualTo("RECEIVED");
@@ -72,7 +78,7 @@ class OrderServiceImplTest {
     void createOrder_shouldSetCustomerIdFromParameter_notFromRequestBody() {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
-        orderService.createOrder(buildCreateRequest(), "injected-user-id", null);
+        orderService.createOrder(buildCreateRequest(), "injected-user-id", null, null);
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         verify(orderRepository).save(orderCaptor.capture());
@@ -84,7 +90,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getOrderType()).isEqualTo("dine-in");
     }
@@ -107,10 +113,10 @@ class OrderServiceImplTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "delivery", "123 Main St", null, null,
-                "John", "555-0000", "card", null);
+                "John", "555-0000", "card", null, null);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(req, "cust-uuid-001", null);
+                orderService.createOrder(req, "cust-uuid-001", null, null);
 
         assertThat(response.getDeliveryFee()).isEqualByComparingTo("2.00");
         assertThat(response.getOrderType()).isEqualTo("delivery");
@@ -121,7 +127,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getDeliveryFee()).isEqualByComparingTo("0.00");
     }
@@ -144,10 +150,10 @@ class OrderServiceImplTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-item-abcd", null, 1, null, null)),
                 "dine-in", null, "2", null,
-                "Jane", "555-0000", "cash", null);
+                "Jane", "555-0000", "cash", null, null);
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        orderService.createOrder(req, "cust-uuid-001", null);
+        orderService.createOrder(req, "cust-uuid-001", null, null);
         verify(orderRepository).save(orderCaptor.capture());
 
         // The service sets items on the order after save — we verify via the items list built internally.
@@ -161,11 +167,11 @@ class OrderServiceImplTest {
                 "branch-uuid-001", null,
                 List.of(),
                 "dine-in", null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
 
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
-        OrderDtos.FrontendOrderResponse response = orderService.createOrder(req, "cust-uuid-001", null);
+        OrderDtos.FrontendOrderResponse response = orderService.createOrder(req, "cust-uuid-001", null, null);
         assertThat(response).isNotNull();
     }
 
@@ -175,9 +181,9 @@ class OrderServiceImplTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "drive-thru", null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
 
-        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.BAD_REQUEST));
@@ -228,9 +234,9 @@ class OrderServiceImplTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "drive-thru", null, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
 
-        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.BAD_REQUEST));
@@ -249,7 +255,7 @@ class OrderServiceImplTest {
         when(valueOperations.get("idempotency:idem-key-123")).thenReturn(cachedJson);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-123");
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-123", null);
 
         assertThat(response.getId()).isEqualTo("order-cached-001");
         verify(orderRepository, never()).save(any());
@@ -263,7 +269,7 @@ class OrderServiceImplTest {
         when(valueOperations.get(anyString())).thenReturn(null);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-new");
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-new", null);
 
         assertThat(response.getId()).isEqualTo("order-uuid-001");
         verify(valueOperations).set(eq("idempotency:idem-key-new"), anyString(), any());
@@ -343,6 +349,7 @@ class OrderServiceImplTest {
         ArgumentCaptor<List<Order.OrderStatus>> statusCaptor = ArgumentCaptor.forClass(List.class);
         verify(orderRepository).findByStatusWithFilters(statusCaptor.capture(), isNull(), isNull(), any());
         assertThat(statusCaptor.getValue()).containsExactlyInAnyOrder(
+                Order.OrderStatus.PAYMENT_PENDING,
                 Order.OrderStatus.RECEIVED, Order.OrderStatus.CONFIRMED,
                 Order.OrderStatus.PREPARING, Order.OrderStatus.READY);
     }
@@ -562,6 +569,6 @@ class OrderServiceImplTest {
         return new OrderDtos.CreateOrderRequest(
                 "branch-uuid-001", "Main Branch",
                 List.of(item1, item2), "dine-in", null, "5", null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
     }
 }

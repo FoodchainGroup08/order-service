@@ -42,6 +42,8 @@ public class OrderDtos {
         private String phoneNumber;
         private String paymentMethod;
         private String specialInstructions;
+        /** Paystack requires an email; optional here if {@code X-User-Email} is sent by the gateway */
+        private String customerEmail;
         // customerId is NOT here — it is extracted from the X-User-Id JWT header by the controller
     }
 
@@ -169,5 +171,11 @@ public class OrderDtos {
         private String estimatedTime;
         private String placedAt;            // ISO-8601 string from createdAt
         private String paymentMethod;
+        /** Hosted Paystack checkout URL while status is PAYMENT_PENDING (also persisted on the order) */
+        private String paymentLink;
+        /** Paystack transaction reference (usually same as order id) */
+        private String paymentReference;
+        /** e.g. NOT_APPLICABLE, PENDING, PAID */
+        private String paymentState;
     }
 }

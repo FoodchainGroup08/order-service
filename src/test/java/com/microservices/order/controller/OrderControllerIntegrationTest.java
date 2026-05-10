@@ -111,7 +111,7 @@ class OrderControllerIntegrationTest {
                 "branch-uuid-001", null,
                 List.of(),
                 "dine-in", null, "5", null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
 
         mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -129,7 +129,7 @@ class OrderControllerIntegrationTest {
                 "", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "dine-in", null, "5", null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
 
         mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -146,7 +146,7 @@ class OrderControllerIntegrationTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "", null, "5", null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
 
         mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -211,7 +211,7 @@ class OrderControllerIntegrationTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
                 "delivery", "123 Main St", null, null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
 
         mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -249,7 +249,7 @@ class OrderControllerIntegrationTest {
                 "branch-uuid-001", null,
                 List.of(new OrderDtos.OrderItemRequest("menu-item-uuid-999", null, 1, null, null)),
                 "dine-in", null, "3", null,
-                "Jane", "555-0000", "cash", null);
+                "Jane", "555-0000", "cash", null, null);
 
         mockMvc.perform(post("/orders")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -539,7 +539,7 @@ class OrderControllerIntegrationTest {
         return new OrderDtos.CreateOrderRequest(
                 "branch-uuid-001", "Main Branch",
                 List.of(item1, item2), "dine-in", null, "5", null,
-                "John", "555-1234", "card", null);
+                "John", "555-1234", "card", null, null);
     }
 
     private Order saveOrder() {

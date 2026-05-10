@@ -31,6 +31,10 @@ public class OrderController {
         summary = "Place a new order",
         description = "Creates a new order. The customer identity is resolved from the X-User-Id header set by the API gateway JWT filter — "
             + "do NOT pass customerId in the request body. "
+            + "For **Paystack** online payment leave `paymentMethod` blank (when Paystack is configured) or set `paystack` / `online`; "
+            + "supply **customerEmail** in the body **or** **X-User-Email** — the response includes **paymentLink** (hosted checkout). "
+            + "Offline methods: `cash`, `cod`, `card`, `in_store`. "
+            + "`order.received` is published after payment — call **POST /v1/orders/{orderId}/payment/verify** after checkout (or enable webhooks later). "
             + "orderType accepts lowercase-hyphen format (\"dine-in\", \"takeaway\", \"delivery\") as well as the enum names. "
             + "Supply an Idempotency-Key header to safely retry without creating duplicate orders.",
         security = @SecurityRequirement(name = "Bearer Authentication"))
@@ -44,6 +48,8 @@ public class OrderController {
             @Valid @RequestBody OrderDtos.CreateOrderRequest request,
             @Parameter(description = "Customer UUID injected by the API gateway from the validated JWT token")
             @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @Parameter(description = "Customer email from JWT — used for Paystack if customerEmail is omitted in body")
+            @RequestHeader(value = "X-User-Email", required = false) String userEmail,
             @Parameter(description = "Optional client-generated unique key used to safely retry the request without creating duplicate orders")
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
 
@@ -53,7 +59,7 @@ public class OrderController {
         }
         log.info("Create order request from user={}, branchId={}", userId, request.getBranchId());
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(orderService.createOrder(request, userId, idempotencyKey));
+                .body(orderService.createOrder(request, userId, idempotencyKey, userEmail));
     }
 
     @Operation(
@@ -71,6 +77,33 @@ public class OrderController {
             @PathVariable String orderId) {
         log.info("Get order by id: {}", orderId);
         return ResponseEntity.ok(orderService.getFrontendOrderById(orderId));
+    }
+
+    @Operation(
+        summary = "Verify Paystack payment",
+        description = "Calls Paystack's verify API for this order's transaction reference and, if payment succeeded, "
+            + "confirms the order (CONFIRMED), publishes `order.received`, and sends the payment-success email. "
+            + "Call this after the customer returns from Paystack hosted checkout (e.g. from your callback page). "
+            + "Idempotent if the order is already confirmed.",
+        security = @SecurityRequirement(name = "Bearer Authentication"))
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Order state after verification"),
+        @ApiResponse(responseCode = "400", description = "Payment not completed or amount mismatch"),
+        @ApiResponse(responseCode = "403", description = "Order belongs to another customer"),
+        @ApiResponse(responseCode = "404", description = "Order not found")
+    })
+    @PostMapping("/{orderId}/payment/verify")
+    public ResponseEntity<OrderDtos.FrontendOrderResponse> verifyPaystackPayment(
+            @Parameter(description = "Order UUID", required = true)
+            @PathVariable String orderId,
+            @Parameter(description = "Customer UUID from JWT / gateway")
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "X-User-Id header is required (set by the API gateway JWT filter)");
+        }
+        log.info("Verify Paystack payment for order {} user {}", orderId, userId);
+        return ResponseEntity.ok(orderService.verifyPaystackPayment(orderId, userId));
     }
 
     @Operation(
@@ -155,7 +188,7 @@ public class OrderController {
     @Operation(
         summary = "Cancel an order",
         description = "Cancels the order and records who cancelled it and why. "
-            + "Only orders in RECEIVED or CONFIRMED status can be cancelled — orders that are already being prepared cannot be reversed.",
+            + "Orders in RECEIVED, CONFIRMED, or PAYMENT_PENDING (unpaid Paystack) can be cancelled — orders already being prepared cannot be reversed.",
         security = @SecurityRequirement(name = "Bearer Authentication"))
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "Order cancelled successfully"),

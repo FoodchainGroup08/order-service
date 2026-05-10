@@ -29,10 +29,36 @@ REST controllers live under **`/v1/orders`** on this service.
 - Publishes Kafka events via the transactional outbox pattern on order creation and every status change.
 - Idempotent order creation via the `Idempotency-Key` header (cached in Redis for 1 minute).
 - Optimistic locking (`@Version`) prevents concurrent status-update conflicts.
+- **Paystack (optional):** when `PAYSTACK_SECRET_KEY` is set, **`paymentMethod` can be omitted** (defaults to online checkout via `app.paystack.default-online-checkout`, env `PAYSTACK_DEFAULT_ONLINE`) or set explicitly to **`paystack`** / **`online`**. Use **`cash`**, **`cod`**, **`card`**, or **`in_store`** for offline flows. Provide **`customerEmail`** in the body or **`X-User-Email`** from the gateway for Paystack. The order is created in **`PAYMENT_PENDING`**, **`paymentLink`** is returned (and stored on the order for **`GET /v1/orders/{id}`**), and an **order-placed** email is sent. **`order.received`** is published only after payment succeeds — either call **`POST /v1/orders/{orderId}/payment/verify`** (Paystack verify API, recommended without webhooks) or enable **`PAYSTACK_WEBHOOK_ENABLED=true`** and register the webhook. After confirmation, the order becomes **`CONFIRMED`** and a **payment-success** email is sent.
+
+---
+
+## Paystack (test / production)
+
+| Variable | Purpose |
+|----------|---------|
+| `PAYSTACK_SECRET_KEY` | Secret key (`sk_test_...` / `sk_live_...`) for **initialize**, **verify**, and **webhook HMAC** |
+| `PAYSTACK_CURRENCY` | Default `NGN` (amounts are sent in **kobo** = major units × 100) |
+| `PAYSTACK_CALLBACK_URL` | Browser return URL after Paystack checkout (e.g. your frontend callback route) |
+| `PAYSTACK_DEFAULT_ONLINE` | Default `true` — blank `paymentMethod` uses Paystack when the secret key is set |
+| `PAYSTACK_WEBHOOK_ENABLED` | Default `false` — set `true` only when you enable webhook handling |
+| `KAFKA_TOPIC_EMAIL_SEND` | Default `notification.email.send` (must match notifications-service consumer) |
+
+**Confirm payment without webhooks:** `POST /api/v1/orders/{orderId}/payment/verify` with JWT (same `X-User-Id` as create order). Call from your Paystack **callback** page after redirect.
+
+**Webhook URL (optional)** — register in the Paystack dashboard only when `PAYSTACK_WEBHOOK_ENABLED=true`:
+
+`POST https://<your-host>/api/v1/payments/paystack/webhook`
+
+The API gateway allows this path **without** a JWT; authenticity is checked with **`X-Paystack-Signature`** when webhooks are enabled.
+
+**Direct to order-service (debug):** `POST http://localhost:<port>/api/v1/payments/paystack/webhook`
 
 ---
 
 ## Order Status Lifecycle
+
+**Online card (Paystack):** `PAYMENT_PENDING` (awaiting payment) → **`CONFIRMED`** (after **verify API** or webhook) → then same as below.
 
 ```
 RECEIVED
@@ -46,7 +72,7 @@ RECEIVED
    |--- CANCELLED  (terminal -- only from RECEIVED or CONFIRMED)
 ```
 
-**Active statuses** (returned by `GET /v1/orders/active`): `RECEIVED`, `CONFIRMED`, `PREPARING`, `READY`
+**Active statuses** (returned by `GET /v1/orders/active`): `PAYMENT_PENDING`, `RECEIVED`, `CONFIRMED`, `PREPARING`, `READY`
 
 **History statuses** (returned by `GET /v1/orders/history`): `PICKED_UP`, `SERVED`, `COMPLETED`, `CANCELLED`
 
@@ -141,11 +167,25 @@ Paths below are **`/v1/orders/...`** relative to **`/api`** (full path on host: 
 
 ### GET /v1/orders/{orderId} — Get Order Details
 
-Returns the same `FrontendOrderResponse` shape as the create endpoint.
+Returns the same `FrontendOrderResponse` shape as the create endpoint. While status is **`PAYMENT_PENDING`**, **`paymentLink`** contains the hosted Paystack URL if initialization succeeded.
 
 **Response `200 OK`:** (same shape as create response above)
 
 **Response `404 Not Found`:** Order not found.
+
+---
+
+### POST /v1/orders/{orderId}/payment/verify — Verify Paystack payment
+
+Calls Paystack’s **`GET /transaction/verify/{reference}`** for this order. On success, confirms the order, publishes **`order.received`**, and sends the payment-success email.
+
+**Required headers:** `X-User-Id` (must own the order).
+
+**Response `200 OK`:** Updated `FrontendOrderResponse` (`CONFIRMED`, `paymentState` **PAID**).
+
+**Response `400`:** Payment not completed or amount mismatch.
+
+**Response `403`:** Order belongs to another customer.
 
 ---
 

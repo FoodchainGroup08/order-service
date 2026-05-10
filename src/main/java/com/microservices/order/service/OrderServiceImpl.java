@@ -1,17 +1,22 @@
 package com.microservices.order.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microservices.order.dto.OrderDtos;
 import com.microservices.order.entity.Order;
 import com.microservices.order.entity.OrderItem;
 import com.microservices.order.entity.OrderStatusUpdate;
 import com.microservices.order.entity.OutboxEvent;
 import com.microservices.order.exception.ResourceNotFoundException;
+import com.microservices.order.notification.OrderEmailPublisher;
+import com.microservices.order.payment.PaystackClient;
+import com.microservices.order.payment.PaystackSignatureVerifier;
 import com.microservices.order.repository.OrderRepository;
 import com.microservices.order.repository.OrderStatusUpdateRepository;
 import com.microservices.order.repository.OutboxEventRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -23,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +39,8 @@ import java.util.stream.Collectors;
 public class OrderServiceImpl implements OrderService {
 
     private static final List<Order.OrderStatus> ACTIVE_STATUSES =
-            List.of(Order.OrderStatus.RECEIVED, Order.OrderStatus.CONFIRMED,
+            List.of(Order.OrderStatus.PAYMENT_PENDING,
+                    Order.OrderStatus.RECEIVED, Order.OrderStatus.CONFIRMED,
                     Order.OrderStatus.PREPARING, Order.OrderStatus.READY);
 
     private static final List<Order.OrderStatus> HISTORY_STATUSES =
@@ -58,6 +65,21 @@ public class OrderServiceImpl implements OrderService {
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
 
+    @Autowired
+    private PaystackClient paystackClient;
+
+    @Autowired
+    private PaystackSignatureVerifier paystackSignatureVerifier;
+
+    @Autowired
+    private OrderEmailPublisher orderEmailPublisher;
+
+    @Value("${app.paystack.default-online-checkout:true}")
+    private boolean defaultOnlineCheckout;
+
+    @Value("${app.paystack.webhook-enabled:false}")
+    private boolean paystackWebhookEnabled;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // ── createOrder ───────────────────────────────────────────────────────────
@@ -66,7 +88,8 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public OrderDtos.FrontendOrderResponse createOrder(OrderDtos.CreateOrderRequest request,
                                                        String customerId,
-                                                       String idempotencyKey) {
+                                                       String idempotencyKey,
+                                                       String customerEmailHeader) {
         if (idempotencyKey != null) {
             String cachedResponse = redisTemplate.opsForValue().get("idempotency:" + idempotencyKey);
             if (cachedResponse != null) {
@@ -79,13 +102,31 @@ public class OrderServiceImpl implements OrderService {
             }
         }
 
+        if (wantsExplicitOnlinePay(request.getPaymentMethod()) && !paystackClient.isConfigured()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Online payment (Paystack) is not configured — set PAYSTACK_SECRET_KEY");
+        }
+
+        boolean paystack = shouldUsePaystack(request.getPaymentMethod());
+
         Order.OrderType orderType = parseOrderType(request.getOrderType());
 
         BigDecimal deliveryFee = Order.OrderType.DELIVERY.equals(orderType) ? DELIVERY_FEE : BigDecimal.ZERO;
         BigDecimal subtotal = calculateSubtotal(request.getItems());
         BigDecimal total = subtotal.add(deliveryFee);
 
-        Order order = Order.builder()
+        String resolvedEmail = resolveCustomerEmail(request.getCustomerEmail(), customerEmailHeader);
+        if (paystack && (resolvedEmail == null || resolvedEmail.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Provide customerEmail in the body or X-User-Email header for Paystack checkout");
+        }
+
+        String paymentMethodStored = request.getPaymentMethod();
+        if (paystack && (paymentMethodStored == null || paymentMethodStored.isBlank())) {
+            paymentMethodStored = "paystack";
+        }
+
+        Order.OrderBuilder builder = Order.builder()
                 .customerId(customerId)
                 .branchId(request.getBranchId())
                 .branchName(request.getBranchName())
@@ -97,14 +138,23 @@ public class OrderServiceImpl implements OrderService {
                 .notes(request.getNotes())
                 .customerName(request.getCustomerName())
                 .phoneNumber(request.getPhoneNumber())
-                .paymentMethod(request.getPaymentMethod())
+                .paymentMethod(paymentMethodStored)
                 .specialInstructions(request.getSpecialInstructions())
                 .estimatedTime(DEFAULT_ESTIMATED_TIME)
-                .idempotencyKey(idempotencyKey)
-                .build();
+                .idempotencyKey(idempotencyKey);
+
+        if (paystack) {
+            builder.status(Order.OrderStatus.PAYMENT_PENDING)
+                    .paymentState(Order.PaymentState.PENDING)
+                    .customerEmail(resolvedEmail != null ? resolvedEmail.trim() : null);
+        } else {
+            builder.paymentState(Order.PaymentState.NOT_APPLICABLE);
+        }
+
+        Order order = builder.build();
 
         order = orderRepository.save(order);
-        log.info("Order created: {}", order.getId());
+        log.info("Order created: {} paystack={}", order.getId(), paystack);
 
         Order finalOrder = order;
         List<OrderItem> items = request.getItems().stream()
@@ -126,7 +176,22 @@ public class OrderServiceImpl implements OrderService {
 
         order.setItems(items);
 
-        publishOutboxEvent(order, "order.received");
+        PaystackClient.PaystackInitResult paystackInit = null;
+        if (paystack) {
+            paystackInit = paystackClient.initializeTransaction(
+                    order.getId(), resolvedEmail.trim(), total);
+            order.setPaystackAccessCode(paystackInit.accessCode());
+            order.setPaystackReference(paystackInit.reference());
+            order.setPaystackAuthorizationUrl(paystackInit.authorizationUrl());
+            order = orderRepository.save(order);
+            orderEmailPublisher.sendOrderPlacedOnlineEmail(
+                    order, paystackInit.authorizationUrl(), resolvedEmail.trim());
+        } else {
+            publishOutboxEvent(order, "order.received");
+            if (resolvedEmail != null && !resolvedEmail.isBlank()) {
+                orderEmailPublisher.sendOrderPlacedOfflineEmail(order, resolvedEmail.trim());
+            }
+        }
 
         OrderDtos.FrontendOrderResponse response = toFrontendResponse(order);
 
@@ -141,6 +206,165 @@ public class OrderServiceImpl implements OrderService {
         }
 
         return response;
+    }
+
+    // ── Paystack webhook ──────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public void processPaystackWebhook(String rawBody, String signature) {
+        if (!paystackWebhookEnabled) {
+            log.debug("Ignoring Paystack webhook (app.paystack.webhook-enabled=false)");
+            return;
+        }
+        if (!paystackSignatureVerifier.isValid(rawBody, signature)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Paystack signature");
+        }
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(rawBody);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid webhook JSON");
+        }
+
+        String event = root.path("event").asText("");
+        if (!"charge.success".equals(event)) {
+            log.debug("Ignoring Paystack event {}", event);
+            return;
+        }
+
+        JsonNode data = root.get("data");
+        if (data == null || data.isNull()) {
+            log.warn("Paystack charge.success without data object");
+            return;
+        }
+
+        String reference = data.path("reference").asText(null);
+        long amountKobo = data.path("amount").asLong(0);
+        if (reference == null || reference.isBlank()) {
+            log.warn("Paystack charge.success without reference");
+            return;
+        }
+
+        confirmPaystackCharge(reference, amountKobo);
+    }
+
+    private void confirmPaystackCharge(String orderId, long amountKobo) {
+        Order order = orderRepository.findByIdWithItems(orderId).orElse(null);
+        if (order == null) {
+            log.warn("Paystack webhook: unknown reference {}", orderId);
+            return;
+        }
+        finalizePaidOrder(order, amountKobo, "paystack-webhook", "Paystack charge.success");
+    }
+
+    /**
+     * Shared confirmation path for webhook and Paystack verify API.
+     */
+    private void finalizePaidOrder(Order order, long amountKobo, String updatedBy, String notes) {
+        String orderId = order.getId();
+        if (order.getStatus() != Order.OrderStatus.PAYMENT_PENDING) {
+            log.info("Order {} not PAYMENT_PENDING (was {}) — idempotent payment noop",
+                    orderId, order.getStatus());
+            return;
+        }
+
+        long expectedKobo = order.getTotalAmount()
+                .multiply(BigDecimal.valueOf(100))
+                .setScale(0, RoundingMode.HALF_UP)
+                .longValueExact();
+        if (amountKobo != expectedKobo) {
+            log.error("Paystack amount mismatch order={} expectedKobo={} actualKobo={}",
+                    orderId, expectedKobo, amountKobo);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Paystack amount mismatch for order");
+        }
+
+        String oldStatus = order.getStatus().toString();
+        order.setPaymentState(Order.PaymentState.PAID);
+        order.setStatus(Order.OrderStatus.CONFIRMED);
+        order.setPaystackAuthorizationUrl(null);
+        order = orderRepository.save(order);
+
+        orderStatusUpdateRepository.save(OrderStatusUpdate.builder()
+                .order(order)
+                .oldStatus(oldStatus)
+                .newStatus(Order.OrderStatus.CONFIRMED.toString())
+                .updatedBy(updatedBy)
+                .notes(notes)
+                .build());
+
+        publishOutboxEvent(order, "order.received");
+        publishOutboxEvent(order, "order.status.updated", oldStatus);
+
+        if (order.getCustomerEmail() != null && !order.getCustomerEmail().isBlank()) {
+            orderEmailPublisher.sendPaymentSuccessfulEmail(order, order.getCustomerEmail());
+        }
+
+        log.info("Order {} confirmed after Paystack payment", orderId);
+    }
+
+    private boolean shouldUsePaystack(String paymentMethod) {
+        if (!paystackClient.isConfigured()) {
+            return false;
+        }
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            return defaultOnlineCheckout;
+        }
+        String p = paymentMethod.trim().toLowerCase();
+        if (isExplicitOfflinePayment(p)) {
+            return false;
+        }
+        return "paystack".equals(p) || "online".equals(p);
+    }
+
+    private static boolean isExplicitOfflinePayment(String p) {
+        return "cash".equals(p) || "cod".equals(p) || "card".equals(p)
+                || "in_store".equals(p) || "in-store".equals(p);
+    }
+
+    private static boolean wantsExplicitOnlinePay(String paymentMethod) {
+        if (paymentMethod == null || paymentMethod.isBlank()) {
+            return false;
+        }
+        String p = paymentMethod.trim().toLowerCase();
+        return "paystack".equals(p) || "online".equals(p);
+    }
+
+    @Override
+    @Transactional
+    public OrderDtos.FrontendOrderResponse verifyPaystackPayment(String orderId, String customerId) {
+        Order order = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+        if (!customerId.equals(order.getCustomerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed to verify this order");
+        }
+        if (order.getStatus() != Order.OrderStatus.PAYMENT_PENDING) {
+            return toFrontendResponse(order);
+        }
+        String ref = (order.getPaystackReference() != null && !order.getPaystackReference().isBlank())
+                ? order.getPaystackReference()
+                : orderId;
+        PaystackClient.VerifyResult vr = paystackClient.verifyTransaction(ref);
+        if (!vr.success()) {
+            String msg = vr.message() != null && !vr.message().isBlank()
+                    ? vr.message()
+                    : "Payment not completed";
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+        }
+        finalizePaidOrder(order, vr.amountKobo(), "paystack-verify-api", "Paystack verify API");
+        Order updated = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+        return toFrontendResponse(updated);
+    }
+
+    private static String resolveCustomerEmail(String bodyEmail, String headerEmail) {
+        if (bodyEmail != null && !bodyEmail.isBlank()) {
+            return bodyEmail.trim();
+        }
+        if (headerEmail != null && !headerEmail.isBlank()) {
+            return headerEmail.trim();
+        }
+        return null;
     }
 
     // ── getOrderById ──────────────────────────────────────────────────────────
@@ -213,7 +437,7 @@ public class OrderServiceImpl implements OrderService {
                     .notes(notes)
                     .build());
 
-            publishOutboxEvent(order, "order.status.updated");
+            publishOutboxEvent(order, "order.status.updated", oldStatus);
 
             if (newStatus == Order.OrderStatus.READY) {
                 publishOutboxEvent(order, "order.ready");
@@ -242,10 +466,6 @@ public class OrderServiceImpl implements OrderService {
 
     // ── private helpers ───────────────────────────────────────────────────────
 
-    /**
-     * Parses orderType from frontend format ("dine-in", "takeaway", "delivery") or
-     * backend enum name format ("DINE_IN", "TAKEAWAY", "DELIVERY").
-     */
     private Order.OrderType parseOrderType(String orderType) {
         if (orderType == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orderType is required");
@@ -259,9 +479,6 @@ public class OrderServiceImpl implements OrderService {
         };
     }
 
-    /**
-     * Converts an OrderType enum to the lowercase-hyphen string the frontend expects.
-     */
     private String toFrontendOrderType(Order.OrderType type) {
         return switch (type) {
             case DINE_IN -> "dine-in";
@@ -270,7 +487,6 @@ public class OrderServiceImpl implements OrderService {
         };
     }
 
-    /** Returns the item name from the request, or a safe default if not supplied. */
     private String resolveItemName(OrderDtos.OrderItemRequest req) {
         if (req.getMenuItemName() != null && !req.getMenuItemName().isBlank()) {
             return req.getMenuItemName();
@@ -280,7 +496,6 @@ public class OrderServiceImpl implements OrderService {
         return "Item " + suffix;
     }
 
-    /** Returns the unit price from the request, or BigDecimal.ZERO if not supplied. */
     private BigDecimal resolveUnitPrice(OrderDtos.OrderItemRequest req) {
         return (req.getUnitPrice() != null) ? req.getUnitPrice() : BigDecimal.ZERO;
     }
@@ -316,6 +531,16 @@ public class OrderServiceImpl implements OrderService {
                 ? order.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + "Z"
                 : null;
 
+        Order.PaymentState ps = order.getPaymentState() != null
+                ? order.getPaymentState()
+                : Order.PaymentState.NOT_APPLICABLE;
+
+        String paymentLink = (order.getStatus() == Order.OrderStatus.PAYMENT_PENDING
+                && order.getPaystackAuthorizationUrl() != null
+                && !order.getPaystackAuthorizationUrl().isBlank())
+                ? order.getPaystackAuthorizationUrl()
+                : null;
+
         return OrderDtos.FrontendOrderResponse.builder()
                 .id(order.getId())
                 .status(order.getStatus() != null ? order.getStatus().toString() : null)
@@ -334,6 +559,9 @@ public class OrderServiceImpl implements OrderService {
                 .estimatedTime(order.getEstimatedTime())
                 .placedAt(placedAt)
                 .paymentMethod(order.getPaymentMethod())
+                .paymentLink(paymentLink)
+                .paymentReference(order.getPaystackReference())
+                .paymentState(ps.name())
                 .build();
     }
 
@@ -381,32 +609,41 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void publishOutboxEvent(Order order, String topic) {
+        publishOutboxEvent(order, topic, null);
+    }
+
+    private void publishOutboxEvent(Order order, String topic, String previousStatus) {
         try {
             Map<String, Object> payload = new java.util.HashMap<>();
-            payload.put("orderId",     order.getId());
-            payload.put("customerId",  order.getCustomerId());
-            payload.put("branchId",    order.getBranchId());
-            payload.put("status",      order.getStatus().toString());
+            payload.put("orderId", order.getId());
+            payload.put("customerId", order.getCustomerId());
+            payload.put("branchId", order.getBranchId());
+            payload.put("status", order.getStatus().toString());
             payload.put("totalAmount", order.getTotalAmount());
-            payload.put("orderType",   order.getOrderType().toString());
+            payload.put("orderType", order.getOrderType().toString());
+
+            if ("order.status.updated".equals(topic) && previousStatus != null) {
+                payload.put("previousStatus", previousStatus);
+                payload.put("newStatus", order.getStatus().toString());
+            }
 
             if ("order.received".equals(topic)) {
-                payload.put("tableNumber",          order.getTableNumber());
-                payload.put("notes",                order.getNotes());
-                payload.put("customerName",         order.getCustomerName());
-                payload.put("phoneNumber",          order.getPhoneNumber());
-                payload.put("paymentMethod",        order.getPaymentMethod());
-                payload.put("specialInstructions",  order.getSpecialInstructions());
-                payload.put("deliveryAddress",      order.getDeliveryAddress());
-                payload.put("deliveryFee",          order.getDeliveryFee());
+                payload.put("tableNumber", order.getTableNumber());
+                payload.put("notes", order.getNotes());
+                payload.put("customerName", order.getCustomerName());
+                payload.put("phoneNumber", order.getPhoneNumber());
+                payload.put("paymentMethod", order.getPaymentMethod());
+                payload.put("specialInstructions", order.getSpecialInstructions());
+                payload.put("deliveryAddress", order.getDeliveryAddress());
+                payload.put("deliveryFee", order.getDeliveryFee());
                 if (order.getItems() != null) {
                     var itemList = order.getItems().stream()
                             .map(item -> {
                                 Map<String, Object> i = new java.util.HashMap<>();
-                                i.put("menuItemId",          item.getMenuItemId());
-                                i.put("menuItemName",        item.getMenuItemName());
-                                i.put("quantity",            item.getQuantity());
-                                i.put("unitPrice",           item.getUnitPrice());
+                                i.put("menuItemId", item.getMenuItemId());
+                                i.put("menuItemName", item.getMenuItemName());
+                                i.put("quantity", item.getQuantity());
+                                i.put("unitPrice", item.getUnitPrice());
                                 i.put("specialInstructions", item.getSpecialInstructions());
                                 return i;
                             })

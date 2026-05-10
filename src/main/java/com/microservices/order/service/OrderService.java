@@ -7,12 +7,13 @@ import org.springframework.data.domain.Page;
 public interface OrderService {
 
     /**
-     * Creates a new order. customerId is extracted from the JWT gateway header (X-User-Id)
-     * and passed in explicitly — it is not present in the request body.
+     * Creates a new order. customerId is extracted from the JWT gateway header (X-User-Id).
+     * customerEmailHeader is optional {@code X-User-Email} — required indirectly when using Paystack.
      */
     OrderDtos.FrontendOrderResponse createOrder(OrderDtos.CreateOrderRequest request,
                                                 String customerId,
-                                                String idempotencyKey);
+                                                String idempotencyKey,
+                                                String customerEmailHeader);
 
     OrderDtos.FrontendOrderResponse getFrontendOrderById(String orderId);
 
@@ -26,4 +27,15 @@ public interface OrderService {
                                               String updatedBy, String notes);
 
     OrderDtos.OrderResponse cancelOrder(String orderId, String cancelledBy, String reason);
+
+    /**
+     * Handles Paystack {@code charge.success} webhooks (verified via {@code X-Paystack-Signature}).
+     * No-op when {@code app.paystack.webhook-enabled} is false.
+     */
+    void processPaystackWebhook(String rawBody, String signature);
+
+    /**
+     * Calls Paystack verify API and confirms the order when payment succeeded (no webhook required).
+     */
+    OrderDtos.FrontendOrderResponse verifyPaystackPayment(String orderId, String customerId);
 }

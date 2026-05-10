@@ -16,6 +16,10 @@ public class StatusTransitionValidator {
     public StatusTransitionValidator() {
         allowedTransitions = new HashMap<>();
 
+        // PAYMENT_PENDING — only cancel via API; CONFIRMED is applied internally after Paystack webhook
+        allowedTransitions.put(Order.OrderStatus.PAYMENT_PENDING,
+                Set.of(Order.OrderStatus.CANCELLED));
+
         // RECEIVED can go to CONFIRMED, PREPARING (kitchen accepts directly), or CANCELLED
         allowedTransitions.put(Order.OrderStatus.RECEIVED,
                 Set.of(Order.OrderStatus.CONFIRMED, Order.OrderStatus.PREPARING, Order.OrderStatus.CANCELLED));

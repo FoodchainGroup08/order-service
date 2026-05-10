@@ -109,10 +109,41 @@ public class Order {
     }
 
     public enum OrderStatus {
+        /** Created; awaiting Paystack payment — kitchen/analytics do not see this order yet */
+        PAYMENT_PENDING,
         RECEIVED, CONFIRMED, PREPARING, READY, PICKED_UP, SERVED, COMPLETED, CANCELLED
     }
 
     public enum OrderType {
         DINE_IN, TAKEAWAY, DELIVERY
     }
+
+    /** Tracks Paystack (online) payment lifecycle; cash/card-at-branch flows use {@link PaymentState#NOT_APPLICABLE}. */
+    public enum PaymentState {
+        NOT_APPLICABLE,
+        PENDING,
+        PAID,
+        FAILED
+    }
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_state", nullable = false, length = 20)
+    @Builder.Default
+    private PaymentState paymentState = PaymentState.NOT_APPLICABLE;
+
+    /** Used for Paystack initialize + receipt emails */
+    @Column(name = "customer_email", length = 320)
+    private String customerEmail;
+
+    /** Returned by Paystack transaction initialize */
+    @Column(name = "paystack_access_code", length = 128)
+    private String paystackAccessCode;
+
+    /** Paystack transaction reference (same as {@link #id} when using order id as reference) */
+    @Column(name = "paystack_reference", length = 128)
+    private String paystackReference;
+
+    /** Hosted checkout URL returned by Paystack initialize — returned again on GET order until paid */
+    @Column(name = "paystack_authorization_url", columnDefinition = "TEXT")
+    private String paystackAuthorizationUrl;
 }

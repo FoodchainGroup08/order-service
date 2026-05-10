@@ -59,3 +59,15 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
   show-actuator: false
+
+app:
+  paystack:
+    secret-key: ${PAYSTACK_SECRET_KEY:}
+    currency: ${PAYSTACK_CURRENCY:NGN}
+    callback-url: ${PAYSTACK_CALLBACK_URL:http://localhost:5173/checkout/payment/callback}
+    # When true (default), unset paymentMethod uses Paystack if PAYSTACK_SECRET_KEY is set
+    default-online-checkout: ${PAYSTACK_DEFAULT_ONLINE:true}
+    # Set true when you register the webhook URL in Paystack dashboard
+    webhook-enabled: ${PAYSTACK_WEBHOOK_ENABLED:false}
+  kafka:
+    topic-email-send: ${KAFKA_TOPIC_EMAIL_SEND:notification.email.send}
