@@ -6,6 +6,7 @@ import com.microservices.order.entity.Order;
 import com.microservices.order.entity.OrderItem;
 import com.microservices.order.entity.OrderStatusUpdate;
 import com.microservices.order.entity.OutboxEvent;
+import com.microservices.order.exception.ResourceNotFoundException;
 import com.microservices.order.repository.OrderRepository;
 import com.microservices.order.repository.OrderStatusUpdateRepository;
 import com.microservices.order.repository.OutboxEventRepository;
@@ -155,6 +156,73 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void createOrder_throws_forEmptyItemsList() {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(),
+                "dine-in", null, null, null,
+                null, null, null, null);
+
+        when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
+
+        OrderDtos.FrontendOrderResponse response = orderService.createOrder(req, "cust-uuid-001", null);
+        assertThat(response).isNotNull();
+    }
+
+    @Test
+    void createOrder_throws_forInvalidOrderType_driveThru() {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
+                "drive-thru", null, null, null,
+                null, null, null, null);
+
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void getOrderById_throws_ResourceNotFoundException_forUnknownId() {
+        when(orderRepository.findByIdWithItems("no-such-id")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> orderService.getFrontendOrderById("no-such-id"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order not found");
+    }
+
+    @Test
+    void updateOrderStatus_throws_forInvalidStatusTransition_completedToReceived() {
+        Order order = Order.builder()
+                .id("order-uuid-001").customerId("cust-uuid-001").branchId("branch-uuid-001")
+                .orderType(Order.OrderType.DINE_IN).totalAmount(new BigDecimal("25.00"))
+                .status(Order.OrderStatus.COMPLETED).build();
+        when(orderRepository.findById("order-uuid-001")).thenReturn(Optional.of(order));
+        when(statusTransitionValidator.isValidTransition(Order.OrderStatus.COMPLETED, Order.OrderStatus.RECEIVED))
+                .thenReturn(false);
+        when(statusTransitionValidator.getValidNextStates(Order.OrderStatus.COMPLETED))
+                .thenReturn(Set.of());
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(
+                "order-uuid-001", Order.OrderStatus.RECEIVED, "staff-001", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.BAD_REQUEST));
+
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void cancelOrder_throws_whenOrderNotFound() {
+        when(orderRepository.findById("missing-order-id")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> orderService.cancelOrder("missing-order-id", "cust-001", "reason"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order not found");
+    }
+
+    @Test
     void createOrder_invalidOrderType_shouldThrow400() {
         OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
                 "branch-uuid-001", null,
@@ -254,8 +322,8 @@ class OrderServiceImplTest {
         when(orderRepository.findByIdWithItems("unknown-id")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> orderService.getOrderById("unknown-id"))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("404");
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order not found");
     }
 
     // ── getActiveOrders ───────────────────────────────────────────────────────
@@ -436,8 +504,8 @@ class OrderServiceImplTest {
 
         assertThatThrownBy(() -> orderService.updateOrderStatus(
                 "ghost-id", Order.OrderStatus.CONFIRMED, "staff-001", null))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("404");
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order not found");
     }
 
     // ── cancelOrder ───────────────────────────────────────────────────────────
@@ -467,8 +535,8 @@ class OrderServiceImplTest {
         when(orderRepository.findById("ghost-id")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> orderService.cancelOrder("ghost-id", "cust-001", "reason"))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("404");
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order not found");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

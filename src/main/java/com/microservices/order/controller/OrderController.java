@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -40,7 +41,7 @@ public class OrderController {
     })
     @PostMapping
     public ResponseEntity<OrderDtos.FrontendOrderResponse> createOrder(
-            @RequestBody OrderDtos.CreateOrderRequest request,
+            @Valid @RequestBody OrderDtos.CreateOrderRequest request,
             @Parameter(description = "Customer UUID injected by the API gateway from the validated JWT token")
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @Parameter(description = "Optional client-generated unique key used to safely retry the request without creating duplicate orders")
@@ -135,7 +136,7 @@ public class OrderController {
     public ResponseEntity<OrderDtos.OrderResponse> updateOrderStatus(
             @Parameter(description = "UUID of the order to update", required = true)
             @PathVariable String orderId,
-            @RequestBody OrderDtos.UpdateStatusRequest request) {
+            @Valid @RequestBody OrderDtos.UpdateStatusRequest request) {
         log.info("Update order status: orderId={}, newStatus={}", orderId, request.getNewStatus());
 
         Order.OrderStatus newStatus;

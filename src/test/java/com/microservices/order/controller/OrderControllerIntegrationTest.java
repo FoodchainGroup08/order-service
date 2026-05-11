@@ -106,6 +106,94 @@ class OrderControllerIntegrationTest {
     }
 
     @Test
+    void createOrder_returns400_whenItemsListIsEmpty() throws Exception {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(),
+                "dine-in", null, "5", null,
+                "John", "555-1234", "card", null);
+
+        mockMvc.perform(post("/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-User-Id", USER_ID)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Validation Failed"))
+                .andExpect(jsonPath("$.fields.items").isNotEmpty());
+    }
+
+    @Test
+    void createOrder_returns400_whenBranchIdIsBlank() throws Exception {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
+                "dine-in", null, "5", null,
+                "John", "555-1234", "card", null);
+
+        mockMvc.perform(post("/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-User-Id", USER_ID)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.fields.branchId").isNotEmpty());
+    }
+
+    @Test
+    void createOrder_returns400_whenOrderTypeIsBlank() throws Exception {
+        OrderDtos.CreateOrderRequest req = new OrderDtos.CreateOrderRequest(
+                "branch-uuid-001", null,
+                List.of(new OrderDtos.OrderItemRequest("menu-1", "Pizza", 1, new BigDecimal("10.00"), null)),
+                "", null, "5", null,
+                "John", "555-1234", "card", null);
+
+        mockMvc.perform(post("/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-User-Id", USER_ID)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.fields.orderType").isNotEmpty());
+    }
+
+    @Test
+    void createOrder_returns401WithErrorShape_whenXUserIdHeaderMissing() throws Exception {
+        mockMvc.perform(post("/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(buildCreateRequest())))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").isNotEmpty())
+                .andExpect(jsonPath("$.path").isNotEmpty())
+                .andExpect(jsonPath("$.message").isNotEmpty());
+    }
+
+    @Test
+    void getOrder_returns404_whenNotFound() throws Exception {
+        mockMvc.perform(get("/orders/non-existent-order-id"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.path").isNotEmpty())
+                .andExpect(jsonPath("$.message").value("Order not found"));
+    }
+
+    @Test
+    void updateStatus_returns400_forInvalidTransition() throws Exception {
+        Order order = saveOrderWithStatus(Order.OrderStatus.COMPLETED);
+
+        mockMvc.perform(put("/orders/" + order.getId() + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new OrderDtos.UpdateStatusRequest("RECEIVED", "staff-001", null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").isNotEmpty())
+                .andExpect(jsonPath("$.message").isNotEmpty());
+    }
+
+    @Test
     void createOrder_withFrontendLowercaseOrderType_shouldParseDineIn() throws Exception {
         OrderDtos.CreateOrderRequest req = buildCreateRequest();
         // buildCreateRequest already uses "dine-in" — verify it parses correctly

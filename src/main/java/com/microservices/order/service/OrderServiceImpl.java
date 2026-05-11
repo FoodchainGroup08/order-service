@@ -5,6 +5,7 @@ import com.microservices.order.entity.Order;
 import com.microservices.order.entity.OrderItem;
 import com.microservices.order.entity.OrderStatusUpdate;
 import com.microservices.order.entity.OutboxEvent;
+import com.microservices.order.exception.ResourceNotFoundException;
 import com.microservices.order.repository.OrderRepository;
 import com.microservices.order.repository.OrderStatusUpdateRepository;
 import com.microservices.order.repository.OutboxEventRepository;
@@ -148,7 +149,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public OrderDtos.FrontendOrderResponse getFrontendOrderById(String orderId) {
         Order order = orderRepository.findByIdWithItems(orderId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
         return toFrontendResponse(order);
     }
 
@@ -156,7 +157,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public OrderDtos.OrderDetailResponse getOrderById(String orderId) {
         Order order = orderRepository.findByIdWithItems(orderId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
         return toDetailResponse(order);
     }
 
@@ -189,7 +190,7 @@ public class OrderServiceImpl implements OrderService {
     public OrderDtos.OrderResponse updateOrderStatus(String orderId, Order.OrderStatus newStatus,
                                                      String updatedBy, String notes) {
         Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
 
         if (!statusTransitionValidator.isValidTransition(order.getStatus(), newStatus)) {
             var validStates = statusTransitionValidator.getValidNextStates(order.getStatus());

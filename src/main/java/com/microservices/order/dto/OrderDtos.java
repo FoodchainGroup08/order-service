@@ -1,5 +1,7 @@
 package com.microservices.order.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,9 +28,12 @@ public class OrderDtos {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class CreateOrderRequest {
+        @NotBlank
         private String branchId;
         private String branchName;        // optional
+        @NotEmpty
         private List<OrderItemRequest> items;
+        @NotBlank
         private String orderType;         // accepts "delivery", "dine-in", "takeaway" OR "DELIVERY", "DINE_IN", "TAKEAWAY"
         private String deliveryAddress;
         private String tableNumber;
@@ -44,6 +49,7 @@ public class OrderDtos {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class UpdateStatusRequest {
+        @NotBlank
         private String newStatus;
         private String updatedBy;
         private String notes;
