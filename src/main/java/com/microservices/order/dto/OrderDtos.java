@@ -18,9 +18,9 @@ public class OrderDtos {
     @AllArgsConstructor
     public static class OrderItemRequest {
         private String menuItemId;
-        private String menuItemName;      // optional — can be null
+        private String menuItemName;
         private Integer quantity;
-        private BigDecimal unitPrice;     // optional — can be null, defaults to 0.00
+        private BigDecimal unitPrice;
         private String specialInstructions;
     }
 
@@ -30,19 +30,36 @@ public class OrderDtos {
     public static class CreateOrderRequest {
         @NotBlank
         private String branchId;
-        private String branchName;        // optional
+        private String branchName;
         @NotEmpty
         private List<OrderItemRequest> items;
         @NotBlank
-        private String orderType;         // accepts "delivery", "dine-in", "takeaway" OR "DELIVERY", "DINE_IN", "TAKEAWAY"
+        private String orderType;
         private String deliveryAddress;
         private String tableNumber;
         private String notes;
         private String customerName;
+        private String customerEmail;
         private String phoneNumber;
         private String paymentMethod;
         private String specialInstructions;
-        // customerId is NOT here — it is extracted from the X-User-Id JWT header by the controller
+
+        public CreateOrderRequest(String branchId, String branchName, List<OrderItemRequest> items,
+                                  String orderType, String deliveryAddress, String tableNumber,
+                                  String notes, String customerName, String phoneNumber,
+                                  String paymentMethod, String specialInstructions) {
+            this.branchId = branchId;
+            this.branchName = branchName;
+            this.items = items;
+            this.orderType = orderType;
+            this.deliveryAddress = deliveryAddress;
+            this.tableNumber = tableNumber;
+            this.notes = notes;
+            this.customerName = customerName;
+            this.phoneNumber = phoneNumber;
+            this.paymentMethod = paymentMethod;
+            this.specialInstructions = specialInstructions;
+        }
     }
 
     @Data
@@ -63,9 +80,6 @@ public class OrderDtos {
         private String reason;
     }
 
-    // ── Responses ─────────────────────────────────────────────────────────────
-
-    /** Slim response returned for status-update and cancel operations. Kept for backward compat. */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -77,7 +91,6 @@ public class OrderDtos {
         private LocalDateTime createdAt;
     }
 
-    /** List-entry response used by GET /orders/active and GET /orders/history. */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -94,7 +107,6 @@ public class OrderDtos {
         private LocalDateTime updatedAt;
     }
 
-    /** Item detail included in OrderDetailResponse. */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -109,7 +121,6 @@ public class OrderDtos {
         private String specialInstructions;
     }
 
-    /** Full order detail including item lines. Kept for backward compat. */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -129,24 +140,17 @@ public class OrderDtos {
         private List<OrderItemResponse> items;
     }
 
-    // ── Frontend-facing responses ──────────────────────────────────────────────
-
-    /** Item shape expected by the frontend. */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
     @Builder
     public static class FrontendOrderItemResponse {
         private String id;
-        private String name;      // menuItemName
-        private double price;     // unitPrice as double
+        private String name;
+        private double price;
         private int quantity;
     }
 
-    /**
-     * Full order response shaped exactly as the frontend expects.
-     * Returned by POST /orders and GET /orders/{id}.
-     */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -160,14 +164,15 @@ public class OrderDtos {
         private BigDecimal total;
         private String branchId;
         private String branchName;
-        private String orderType;           // lowercase with hyphens: "dine-in", "takeaway", "delivery"
+        private String orderType;
         private String tableNumber;
         private String deliveryAddress;
         private String customerName;
+        private String customerEmail;
         private String phoneNumber;
         private String specialInstructions;
         private String estimatedTime;
-        private String placedAt;            // ISO-8601 string from createdAt
+        private String placedAt;
         private String paymentMethod;
     }
 }

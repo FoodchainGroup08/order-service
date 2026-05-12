@@ -66,6 +66,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public OrderDtos.FrontendOrderResponse createOrder(OrderDtos.CreateOrderRequest request,
                                                        String customerId,
+                                                       String customerEmail,
                                                        String idempotencyKey) {
         if (idempotencyKey != null) {
             String cachedResponse = redisTemplate.opsForValue().get("idempotency:" + idempotencyKey);
@@ -96,6 +97,7 @@ public class OrderServiceImpl implements OrderService {
                 .tableNumber(request.getTableNumber())
                 .notes(request.getNotes())
                 .customerName(request.getCustomerName())
+                .customerEmail(coalesce(customerEmail, request.getCustomerEmail()))
                 .phoneNumber(request.getPhoneNumber())
                 .paymentMethod(request.getPaymentMethod())
                 .specialInstructions(request.getSpecialInstructions())
@@ -329,6 +331,7 @@ public class OrderServiceImpl implements OrderService {
                 .tableNumber(order.getTableNumber())
                 .deliveryAddress(order.getDeliveryAddress())
                 .customerName(order.getCustomerName())
+                .customerEmail(order.getCustomerEmail())
                 .phoneNumber(order.getPhoneNumber())
                 .specialInstructions(order.getSpecialInstructions())
                 .estimatedTime(order.getEstimatedTime())
@@ -349,6 +352,10 @@ public class OrderServiceImpl implements OrderService {
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();
+    }
+
+    private String coalesce(String first, String fallback) {
+        return first != null && !first.isBlank() ? first : fallback;
     }
 
     private OrderDtos.OrderDetailResponse toDetailResponse(Order order) {
@@ -390,10 +397,26 @@ public class OrderServiceImpl implements OrderService {
             payload.put("totalAmount", order.getTotalAmount());
             payload.put("orderType",   order.getOrderType().toString());
 
+            payload.put("customerName",  order.getCustomerName());
+            payload.put("customerEmail", order.getCustomerEmail());
+
+            if ("order.status.updated".equals(topic) || "order.ready".equals(topic)) {
+                OrderStatusUpdate latest = orderStatusUpdateRepository
+                        .findTopByOrder_IdOrderByTimestampDesc(order.getId())
+                        .orElse(null);
+                if (latest != null) {
+                    payload.put("previousStatus", latest.getOldStatus());
+                    payload.put("newStatus",      latest.getNewStatus());
+                    payload.put("updatedBy",      latest.getUpdatedBy());
+                    payload.put("notes",          latest.getNotes());
+                } else {
+                    payload.put("newStatus", order.getStatus().toString());
+                }
+            }
+
             if ("order.received".equals(topic)) {
                 payload.put("tableNumber",          order.getTableNumber());
                 payload.put("notes",                order.getNotes());
-                payload.put("customerName",         order.getCustomerName());
                 payload.put("phoneNumber",          order.getPhoneNumber());
                 payload.put("paymentMethod",        order.getPaymentMethod());
                 payload.put("specialInstructions",  order.getSpecialInstructions());

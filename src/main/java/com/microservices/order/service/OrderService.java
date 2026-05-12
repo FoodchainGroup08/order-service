@@ -12,6 +12,7 @@ public interface OrderService {
      */
     OrderDtos.FrontendOrderResponse createOrder(OrderDtos.CreateOrderRequest request,
                                                 String customerId,
+                                                String customerEmail,
                                                 String idempotencyKey);
 
     OrderDtos.FrontendOrderResponse getFrontendOrderById(String orderId);

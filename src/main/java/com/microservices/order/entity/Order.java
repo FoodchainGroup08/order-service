@@ -72,6 +72,9 @@ public class Order {
     @Column(name = "customer_name", length = 255)
     private String customerName;
 
+    @Column(name = "customer_email", length = 255)
+    private String customerEmail;
+
     @Column(name = "phone_number", length = 50)
     private String phoneNumber;
 

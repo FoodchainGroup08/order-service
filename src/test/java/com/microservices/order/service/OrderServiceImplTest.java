@@ -58,7 +58,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getId()).isEqualTo("order-uuid-001");
         assertThat(response.getStatus()).isEqualTo("RECEIVED");
@@ -72,7 +72,7 @@ class OrderServiceImplTest {
     void createOrder_shouldSetCustomerIdFromParameter_notFromRequestBody() {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
-        orderService.createOrder(buildCreateRequest(), "injected-user-id", null);
+        orderService.createOrder(buildCreateRequest(), "injected-user-id", null, null);
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         verify(orderRepository).save(orderCaptor.capture());
@@ -84,7 +84,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getOrderType()).isEqualTo("dine-in");
     }
@@ -110,7 +110,7 @@ class OrderServiceImplTest {
                 "John", "555-0000", "card", null);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(req, "cust-uuid-001", null);
+                orderService.createOrder(req, "cust-uuid-001", null, null);
 
         assertThat(response.getDeliveryFee()).isEqualByComparingTo("2.00");
         assertThat(response.getOrderType()).isEqualTo("delivery");
@@ -121,7 +121,7 @@ class OrderServiceImplTest {
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null);
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, null);
 
         assertThat(response.getDeliveryFee()).isEqualByComparingTo("0.00");
     }
@@ -147,7 +147,7 @@ class OrderServiceImplTest {
                 "Jane", "555-0000", "cash", null);
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        orderService.createOrder(req, "cust-uuid-001", null);
+        orderService.createOrder(req, "cust-uuid-001", null, null);
         verify(orderRepository).save(orderCaptor.capture());
 
         // The service sets items on the order after save — we verify via the items list built internally.
@@ -165,7 +165,7 @@ class OrderServiceImplTest {
 
         when(orderRepository.save(any(Order.class))).thenReturn(stubSavedOrder());
 
-        OrderDtos.FrontendOrderResponse response = orderService.createOrder(req, "cust-uuid-001", null);
+        OrderDtos.FrontendOrderResponse response = orderService.createOrder(req, "cust-uuid-001", null, null);
         assertThat(response).isNotNull();
     }
 
@@ -177,7 +177,7 @@ class OrderServiceImplTest {
                 "drive-thru", null, null, null,
                 null, null, null, null);
 
-        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.BAD_REQUEST));
@@ -230,7 +230,7 @@ class OrderServiceImplTest {
                 "drive-thru", null, null, null,
                 null, null, null, null);
 
-        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null))
+        assertThatThrownBy(() -> orderService.createOrder(req, "cust-uuid-001", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.BAD_REQUEST));
@@ -249,7 +249,7 @@ class OrderServiceImplTest {
         when(valueOperations.get("idempotency:idem-key-123")).thenReturn(cachedJson);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-123");
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, "idem-key-123");
 
         assertThat(response.getId()).isEqualTo("order-cached-001");
         verify(orderRepository, never()).save(any());
@@ -263,7 +263,7 @@ class OrderServiceImplTest {
         when(valueOperations.get(anyString())).thenReturn(null);
 
         OrderDtos.FrontendOrderResponse response =
-                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", "idem-key-new");
+                orderService.createOrder(buildCreateRequest(), "cust-uuid-001", null, "idem-key-new");
 
         assertThat(response.getId()).isEqualTo("order-uuid-001");
         verify(valueOperations).set(eq("idempotency:idem-key-new"), anyString(), any());
@@ -565,3 +565,4 @@ class OrderServiceImplTest {
                 "John", "555-1234", "card", null);
     }
 }
+

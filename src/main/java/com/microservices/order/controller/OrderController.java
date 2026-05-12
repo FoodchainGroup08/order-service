@@ -44,6 +44,8 @@ public class OrderController {
             @Valid @RequestBody OrderDtos.CreateOrderRequest request,
             @Parameter(description = "Customer UUID injected by the API gateway from the validated JWT token")
             @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @Parameter(description = "Customer email injected by the API gateway from the validated JWT token")
+            @RequestHeader(value = "X-User-Email", required = false) String userEmail,
             @Parameter(description = "Optional client-generated unique key used to safely retry the request without creating duplicate orders")
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
 
@@ -53,7 +55,7 @@ public class OrderController {
         }
         log.info("Create order request from user={}, branchId={}", userId, request.getBranchId());
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(orderService.createOrder(request, userId, idempotencyKey));
+                .body(orderService.createOrder(request, userId, userEmail, idempotencyKey));
     }
 
     @Operation(
