@@ -116,6 +116,6 @@ public class Order {
     }
 
     public enum OrderType {
-        DINE_IN, PICKUP, DELIVERY
+        DINE_IN, TAKEAWAY, DELIVERY
     }
 }
